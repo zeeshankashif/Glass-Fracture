@@ -1,0 +1,6 @@
+{
+  "name": "ZEXAN GLASS SHATTER",
+  "description": "A high-performance scroll-driven 3D WebGL glass shattering portfolio experience built with React Three Fiber and GSAP ScrollTrigger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
