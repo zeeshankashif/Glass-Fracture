@@ -555,6 +555,8 @@ interface SingleShardProps {
 
 function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleShardProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const { width: screenWidth } = useThree((state) => state.size);
+  const isMobileDevice = screenWidth < 768;
 
   // Build custom polygon geometry
   const glassGeometry = useMemo(() => {
@@ -591,6 +593,25 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
 
     let targetScale = 1.0;
 
+    // High fidelity dynamic mobile positions
+    let sx = shard.settledPos[0];
+    let sy = shard.settledPos[1];
+    let sz = shard.settledPos[2];
+
+    const driftScale = isMobileDevice ? 0.45 : 1.0;
+    const dynamicDriftX = shard.drift[0] * driftScale;
+    const dynamicDriftY = shard.drift[1] * driftScale;
+    const dynamicDriftZ = shard.drift[2] * driftScale;
+
+    if (isMobileDevice) {
+      // Clean mobile-optimized 2x3 bento spatial matrix
+      sx = (shard.id === 1 || shard.id === 6 || shard.id === 5) ? -1.25 : 1.25;
+      if (shard.id === 1 || shard.id === 2) sy = 2.2;
+      else if (shard.id === 6 || shard.id === 3) sy = 0.0;
+      else sy = -2.2;
+      sz = -0.6;
+    }
+
     if (p < 0.45) {
       // Phase 1 & crack build-up vibration
       if (p > 0.20) {
@@ -603,19 +624,15 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
       // Phase 2 Shatter Dispersal
       const t = (p - 0.45) / 0.20; // 0.0 to 1.0
 
-      const finalX = shard.settledPos[0];
-      const finalY = shard.settledPos[1];
-      const finalZ = shard.settledPos[2];
-
       const centX = shard.centroid[0];
       const centY = shard.centroid[1];
 
       // Symmetrical explosive push out along drift axis, fading as they snap to bento grid
       const burstScale = Math.sin(t * Math.PI) * 1.8;
 
-      tx = THREE.MathUtils.lerp(centX, finalX, t) + shard.drift[0] * burstScale;
-      ty = THREE.MathUtils.lerp(centY, finalY, t) + shard.drift[1] * burstScale;
-      tz = THREE.MathUtils.lerp(0, finalZ, t) + shard.drift[2] * burstScale;
+      tx = THREE.MathUtils.lerp(centX, sx, t) + dynamicDriftX * burstScale;
+      ty = THREE.MathUtils.lerp(centY, sy, t) + dynamicDriftY * burstScale;
+      tz = THREE.MathUtils.lerp(0, sz, t) + dynamicDriftZ * burstScale;
 
       // Rotation tumble loop that settles beautifully flat
       const rotPulse = Math.sin(t * Math.PI);
@@ -624,16 +641,16 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
       rz = shard.rotationRate[2] * rotPulse * 1.5;
     } else {
       // Phase 3 Grid Sifting
-      tx = shard.settledPos[0];
-      ty = shard.settledPos[1];
-      tz = shard.settledPos[2];
+      tx = sx;
+      ty = sy;
+      tz = sz;
 
       if (hoveredId === shard.id) {
-        tz += 1.8; // Draw closer to viewport
-        targetScale = 1.08;
+        tz += isMobileDevice ? 3.0 : 1.8; // Draw closer to viewport
+        targetScale = isMobileDevice ? 1.15 : 1.08;
       } else if (hoveredId !== -1) {
-        tz -= 1.4; // Recede other elements back
-        targetScale = 0.86;
+        tz -= isMobileDevice ? 2.5 : 1.4; // Recede other elements back
+        targetScale = isMobileDevice ? 0.75 : 0.86;
       }
     }
 
@@ -674,7 +691,15 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
   return (
     <group ref={groupRef}>
       {/* 1. Translucent Physical Glass Mesh */}
-      <mesh geometry={glassGeometry}>
+      <mesh 
+        geometry={glassGeometry}
+        onClick={(e) => {
+          if (scrollProgress >= 0.66) {
+            e.stopPropagation();
+            setHoveredId(hoveredId === shard.id ? -1 : shard.id);
+          }
+        }}
+      >
         <meshPhysicalMaterial
           transmission={0.85}
           roughness={0.24}
@@ -697,18 +722,18 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
       {showHtml && (
         <Html
           transform
-          distanceFactor={2.7}
+          distanceFactor={isMobileDevice ? 3.4 : 2.7}
           position={[0, 0, 0.05]}
           onPointerOver={() => {
-            if (scrollProgress >= 0.66) setHoveredId(shard.id);
+            if (scrollProgress >= 0.66 && !isMobileDevice) setHoveredId(shard.id);
           }}
           onPointerOut={() => {
-            if (scrollProgress >= 0.66) setHoveredId(-1);
+            if (scrollProgress >= 0.66 && !isMobileDevice) setHoveredId(-1);
           }}
           className="pointer-events-auto select-none"
           style={{
-            width: '320px',
-            height: '220px',
+            width: isMobileDevice ? '260px' : '320px',
+            height: isMobileDevice ? '180px' : '220px',
             opacity: htmlOpacity * componentOpacity,
             filter: filterStyle,
             transform: `scale(${isSelfHovered ? 1.04 : 1.0})`,
@@ -717,28 +742,36 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
         >
           <div 
             id={`shard-card-${shard.id}`}
-            className="relative p-5 rounded-xl border border-[#FF1493]/20 bg-[#0B0D10]/85 backdrop-blur-2xl text-white font-sans flex flex-col justify-between h-full shadow-[0_0_20px_rgba(255,20,147,0.04)] text-left hover:border-[#FF1493]/55 transition-all duration-300 overflow-hidden"
+            onClick={(e) => {
+              if (scrollProgress >= 0.66) {
+                e.stopPropagation();
+                setHoveredId(hoveredId === shard.id ? -1 : shard.id);
+              }
+            }}
+            className={`relative rounded-xl border border-[#FF1493]/20 bg-[#0B0D10]/85 backdrop-blur-2xl text-white font-sans flex flex-col justify-between h-full shadow-[0_0_20px_rgba(255,20,147,0.04)] text-left hover:border-[#FF1493]/55 transition-all duration-300 overflow-hidden cursor-pointer ${
+              isMobileDevice ? 'p-3' : 'p-5'
+            }`}
           >
             {/* Ambient Diagonal Gradient highlight from mockup */}
             <div className="absolute inset-0 bg-gradient-to-br from-transparent via-transparent to-[#FF1493]/5 pointer-events-none" />
 
             {/* Header */}
-            <div className="flex justify-between items-start border-b border-[#FF1493]/15 pb-2.5 relative z-10">
+            <div className={`flex justify-between items-start border-b border-[#FF1493]/15 relative z-10 ${isMobileDevice ? 'pb-1.5' : 'pb-2.5'}`}>
               <div>
-                <span className="font-mono text-[9px] text-slate-300 opacity-60 tracking-widest block uppercase font-bold">
+                <span className={`font-mono text-slate-300 opacity-60 tracking-widest block uppercase font-bold ${isMobileDevice ? 'text-[7.5px]' : 'text-[9px]'}`}>
                   {shard.id === 4 ? "Core System" : shard.id === 1 ? "Build Log 001" : `Project ${String.fromCharCode(64 + shard.id)}`}
                 </span>
-                <h3 className="font-mono text-[14px] font-extrabold text-[#FF1493] tracking-tight leading-none mt-1">
+                <h3 className={`font-mono font-extrabold text-[#FF1493] tracking-tight leading-none mt-1 ${isMobileDevice ? 'text-[11.5px]' : 'text-[14px]'}`}>
                   {shard.title.toUpperCase().replace(/ /g, "_")}
                 </h3>
               </div>
-              <span className="font-mono text-[9px] text-[#FF1493] bg-[#3A0822]/30 px-2 py-0.5 rounded border border-[#FF1493]/20 font-bold">
+              <span className={`font-mono text-[#FF1493] bg-[#3A0822]/30 rounded border border-[#FF1493]/20 font-bold ${isMobileDevice ? 'text-[7.5px] px-1.5 py-0.5' : 'text-[9px] px-2 py-0.5'}`}>
                 SR_0{shard.id}
               </span>
             </div>
 
             {/* Description Body */}
-            <p className="text-slate-300 text-xs my-1.5 leading-relaxed font-normal relative z-10">
+            <p className={`text-slate-300 leading-relaxed font-normal relative z-10 ${isMobileDevice ? 'text-[10px] my-1' : 'text-xs my-1.5'}`}>
               {shard.desc}
             </p>
 
@@ -746,7 +779,7 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
             <div className="relative z-10">
               {shard.id === 4 ? (
                 /* Animated Real CSS Spectrum Columns */
-                <div className="w-full h-12 bg-[#FF1493]/10 flex items-end gap-1.5 p-1.5 rounded border border-[#FF1493]/15 mb-2.5">
+                <div className={`w-full bg-[#FF1493]/10 flex items-end gap-1.5 rounded border border-[#FF1493]/15 ${isMobileDevice ? 'h-9 p-1 mb-1.5' : 'h-12 p-1.5 mb-2.5'}`}>
                   <div className="flex-1 bg-[#FF1493] h-[40%] animate-pulse"></div>
                   <div className="flex-1 bg-[#FF1493] h-[72%] animate-pulse" style={{ animationDelay: '0.1s' }}></div>
                   <div className="flex-1 bg-[#FF1493] h-[58%] animate-pulse" style={{ animationDelay: '0.2s' }}></div>
@@ -756,7 +789,7 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
                 </div>
               ) : (
                 /* Standard dynamic data box layout */
-                <div className="mt-1.5 mb-2.5 border-l-2 border-[#FF1493] pl-3 flex flex-col gap-1">
+                <div className={`border-l-2 border-[#FF1493] pl-3 flex flex-col gap-1 ${isMobileDevice ? 'mt-1 mb-1.5' : 'mt-1.5 mb-2.5'}`}>
                   {shard.id === 1 && (
                     <>
                       <div className="flex justify-between font-mono text-[10px] text-slate-400 leading-none">
@@ -815,7 +848,7 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
               )}
 
               {/* Technologies list */}
-              <div className="flex flex-wrap gap-1 mb-2.5">
+              <div className={`flex flex-wrap gap-1 ${isMobileDevice ? 'mb-1.5' : 'mb-2.5'}`}>
                 {shard.tech.split(', ').map((techItem) => (
                   <span
                     key={techItem}
@@ -827,7 +860,7 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
               </div>
 
               {/* High precision telemetry metric array */}
-              <div className="flex items-center justify-between font-mono text-[8.5px] text-[#FF1493]/90 bg-[#000000]/80 px-2 py-1.5 rounded border border-[#FF1493]/15">
+              <div className={`flex items-center justify-between font-mono text-[#FF1493]/90 bg-[#000000]/80 rounded border border-[#FF1493]/15 ${isMobileDevice ? 'text-[7.5px] px-1.5 py-1' : 'text-[8.5px] px-2 py-1.5'}`}>
                 <span className="flex items-center gap-1 font-bold">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#FF1493] animate-ping"></span>
                   METRICS:
@@ -847,33 +880,39 @@ function SingleShard({ shard, scrollProgress, hoveredId, setHoveredId }: SingleS
 // -------------------------------------------------------------
 function CameraFlightController({ scrollProgress }: { scrollProgress: number }) {
   const camLookAt = useRef(new THREE.Vector3(0, 0, 0));
+  const { width: pixelWidth, height: pixelHeight } = useThree((state) => state.size);
 
   useFrame(({ camera }) => {
+    const aspect = pixelWidth / pixelHeight;
+    // Mathematically perfect portrait backoff ratio so that the glass monolith and bento panels never overflow horizontally
+    const zoomMultiplier = aspect < 1 ? Math.max(1.0, 1.45 / aspect) : 1.0;
+    const lateralMultiplier = aspect < 1 ? aspect * 0.45 : 1.0;
+
     let tx = 0;
     let ty = 0;
-    let tz = 6.2; // Back focal distance
+    let tz = 6.2 * zoomMultiplier; // Bounded back focal distance
     const lookAtTarget = new THREE.Vector3(0, 0, 0);
 
     if (scrollProgress < 0.45) {
       // Phase 1: Flat centered lock
       tx = 0;
       ty = 0;
-      tz = 6.2;
+      tz = 6.2 * zoomMultiplier;
     } else if (scrollProgress >= 0.45 && scrollProgress < 0.66) {
       // Phase 2 Shatter Reaction - Recoil physical kick-back of camera on blast
       const reactionT = (scrollProgress - 0.45) / 0.21;
       const recoilForce = Math.sin(reactionT * Math.PI) * 0.9;
       tx = 0;
       ty = 0;
-      tz = 6.2 + recoilForce;
+      tz = (6.2 + recoilForce) * zoomMultiplier;
     } else {
       // Phase 3 Deep Sifting - Complex panflight path
       const t = (scrollProgress - 0.66) / 0.34; // Normalized 0-1 camera flight
 
-      // Smooth flight loop
-      tx = Math.sin(t * Math.PI * 1.1) * 2.2;
-      ty = Math.cos(t * Math.PI * 0.8) * 0.7;
-      tz = 6.2 - Math.sin(t * Math.PI) * 0.9;
+      // Smooth flight loop with lateral range limitations on narrow viewports
+      tx = Math.sin(t * Math.PI * 1.1) * 2.2 * lateralMultiplier;
+      ty = Math.cos(t * Math.PI * 0.8) * 0.7 * lateralMultiplier;
+      tz = (6.2 - Math.sin(t * Math.PI) * 0.9) * zoomMultiplier;
 
       // Adjust focal tracking ahead
       lookAtTarget.set(tx * 0.25, ty * 0.25, 0);
@@ -1134,54 +1173,56 @@ export default function App() {
               ------------------------------------------------------------- */}
           
           {/* Header HUD - Direct from Artistic Flair Design */}
-          <div className="absolute top-0 inset-x-0 p-8 flex justify-between items-start z-30 pointer-events-auto bg-gradient-to-b from-[#000000]/90 via-[#000000]/30 to-transparent">
+          <div className="absolute top-0 inset-x-0 p-4 sm:p-6 md:p-8 flex flex-col md:flex-row justify-between items-start gap-4 z-30 pointer-events-auto bg-gradient-to-b from-[#000000]/95 via-[#000000]/40 to-transparent">
             {/* Left Wing */}
-            <div className="flex flex-col">
-              <div className="mb-2">
-                <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-[#FF1493] border border-[#FF1493]/40 px-2.5 py-1 bg-[#3A0822]/30 inline-block rounded font-bold">
+            <div className="flex flex-col w-full md:w-auto">
+              <div className="mb-1.5">
+                <span className="font-mono text-[8px] sm:text-[9px] uppercase tracking-[0.2em] text-[#FF1493] border border-[#FF1493]/40 px-2.5 py-1 bg-[#3A0822]/30 inline-block rounded font-bold">
                   System Active
                 </span>
               </div>
-              <h1 className="font-sans text-3xl md:text-4xl font-black tracking-tighter text-white leading-none">
+              <h1 className="font-sans text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black tracking-tighter text-white leading-none">
                 ZEXAN GLASS SHATTER
               </h1>
-              <span className="font-mono text-[10px] text-slate-400 opacity-70 uppercase block mt-1.5">
+              <span className="font-mono text-[9px] sm:text-[10px] text-slate-400 opacity-70 uppercase block mt-1.5">
                 Coord: 52.3676 / 4.9041 &bull; PHASE: {activePhase === 1 ? "MONOLITH_LOCK" : activePhase === 2 ? "FRACTURE_STRESS" : "DEEP_SIFT"}
               </span>
 
               {/* Dynamic Preset Switcher Panel */}
-              <div className="mt-4 flex gap-1.5 items-center pointer-events-auto bg-[#0B0D10]/85 p-1.5 rounded-lg border border-[#FF1493]/20 shadow-[0_0_15px_rgba(255,20,147,0.08)] max-w-fit">
-                <span className="font-mono text-[8px] text-[#FF1493] font-bold uppercase tracking-wider mr-1">[FX_ENGINE_PRESETS]:</span>
-                {PRESETS_DATA.map((p, idx) => (
-                  <button
-                    key={p.name}
-                    id={`preset-btn-${idx}`}
-                    onClick={() => {
-                      setActivePreset(idx);
-                      if (!muted && audioUnlocked) {
-                        audioEngine.playGlassSnap();
-                      }
-                    }}
-                    className={`cursor-pointer font-mono text-[8px] px-2.5 py-1 rounded transition-all duration-150 border uppercase ${
-                      activePreset === idx 
-                        ? 'bg-[#FF1493] text-black border-[#FF1493] font-black' 
-                        : 'bg-transparent text-slate-400 border-slate-800/80 hover:border-[#FF1493]/40 hover:text-white'
-                    }`}
-                  >
-                    {p.name.slice(3)}
-                  </button>
-                ))}
+              <div className="mt-3.5 flex flex-wrap gap-1.5 items-center pointer-events-auto bg-[#0B0D10]/85 p-1 sm:p-1.5 rounded-lg border border-[#FF1493]/20 shadow-[0_0_15px_rgba(255,20,147,0.08)] max-w-fit">
+                <span className="font-mono text-[7px] sm:text-[8px] text-[#FF1493] font-bold uppercase tracking-wider pl-1 mr-1">[FX_ENGINE_PRESETS]:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESETS_DATA.map((p, idx) => (
+                    <button
+                      key={p.name}
+                      id={`preset-btn-${idx}`}
+                      onClick={() => {
+                        setActivePreset(idx);
+                        if (!muted && audioUnlocked) {
+                          audioEngine.playGlassSnap();
+                        }
+                      }}
+                      className={`cursor-pointer font-mono text-[7px] sm:text-[8px] px-2 py-0.5 sm:px-2.5 sm:py-1 rounded transition-all duration-150 border uppercase ${
+                        activePreset === idx 
+                          ? 'bg-[#FF1493] text-black border-[#FF1493] font-black' 
+                          : 'bg-transparent text-slate-400 border-slate-800/80 hover:border-[#FF1493]/40 hover:text-white'
+                      }`}
+                    >
+                      {p.name.slice(3)}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             {/* Right Wing */}
-            <div className="text-right flex flex-col items-end gap-1">
+            <div className="text-left md:text-right w-full md:w-auto flex md:flex-col justify-between md:justify-start items-center md:items-end gap-3 mt-1.5 md:mt-0 border-t border-slate-800/40 md:border-0 pt-3 md:pt-0">
               {/* Mute controller */}
               {audioUnlocked && (
                 <button
                   id="mute-button"
                   onClick={handleMuteToggle}
-                  className="cursor-pointer font-mono text-[9px] text-[#FF1493] border border-[#FF1493]/20 hover:border-[#FF1493]/60 bg-[#0B0D10]/90 rounded px-3 py-1 flex items-center gap-1.5 transition-all mb-2 shadow-[0_0_15px_rgba(255,20,147,0.1)]"
+                  className="cursor-pointer font-mono text-[8px] sm:text-[9px] text-[#FF1493] border border-[#FF1493]/20 hover:border-[#FF1493]/60 bg-[#0B0D10]/90 rounded px-2.5 py-1 flex items-center gap-1.5 transition-all md:mb-2 shadow-[0_0_15px_rgba(255,20,147,0.1)]"
                 >
                   {muted ? (
                     <>
@@ -1197,40 +1238,42 @@ export default function App() {
                 </button>
               )}
               
-              <div className="font-mono text-[10px] text-slate-400 opacity-60 uppercase leading-none">
-                Structural Integrity
-              </div>
-              <div 
-                className="font-sans text-3xl font-black text-[#FF1493] tracking-tight transition-all duration-300"
-                style={{ textShadow: '0 0 10px rgba(255,20,147,0.45)' }}
-              >
-                {(scrollProgress < 0.21 ? 100 : Math.max(100 - (scrollProgress - 0.21) * 150, 18.4)).toFixed(1)}%
-              </div>
-              <div className="font-mono text-[9px] text-[#FF1493]/70 opacity-80 uppercase font-bold">
-                Phase: {activePhase === 1 ? "Monolith Rig" : activePhase === 2 ? "Dispersal" : "Grid Sift"}
+              <div className="flex flex-col items-start md:items-end">
+                <div className="font-mono text-[9px] sm:text-[10px] text-slate-500 uppercase leading-none">
+                  Structural Integrity
+                </div>
+                <div 
+                  className="font-sans text-xl sm:text-2xl md:text-3xl font-black text-[#FF1493] tracking-tight transition-all duration-300 mt-0.5"
+                  style={{ textShadow: '0 0 10px rgba(255,20,147,0.45)' }}
+                >
+                  {(scrollProgress < 0.21 ? 100 : Math.max(100 - (scrollProgress - 0.21) * 150, 18.4)).toFixed(1)}%
+                </div>
+                <div className="font-mono text-[8px] sm:text-[9px] text-[#FF1493]/70 opacity-80 uppercase font-bold mt-0.5 hidden sm:block">
+                  Phase: {activePhase === 1 ? "Monolith Rig" : activePhase === 2 ? "Dispersal" : "Grid Sift"}
+                </div>
               </div>
             </div>
           </div>
 
           {/* Center Monolith HUD Labels (Only visible prior to complete break) */}
           {scrollProgress < 0.45 && (
-            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-10 flex flex-col justify-center items-center text-center pointer-events-none">
-              <div className="max-w-xl px-6 py-4 rounded-xl border border-[#FF1493]/15 bg-[#0B0D10]/80 backdrop-blur-md shadow-[0_4px_30px_rgba(0,0,0,0.5)] flex flex-col items-center">
-                <h2 className="font-mono text-[11px] text-[#FF1493] tracking-[0.35em] uppercase font-bold animate-pulse">
+            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 z-10 flex flex-col justify-center items-center text-center p-4 pointer-events-none">
+              <div className="w-[90%] max-w-sm sm:max-w-md px-4 sm:px-6 py-3.5 sm:py-4 rounded-xl border border-[#FF1493]/15 bg-[#0B0D10]/85 backdrop-blur-md shadow-[0_4px_30px_rgba(0,0,0,0.5)] flex flex-col items-center">
+                <h2 className="font-mono text-[9px] sm:text-[11px] text-[#FF1493] tracking-[0.35em] uppercase font-bold animate-pulse">
                   [ENGAGE_STRUCTURAL_STRESS]
                 </h2>
-                <div className="w-[180px] h-0.5 bg-gradient-to-r from-transparent via-[#FF1493]/30 to-transparent my-3" />
-                <p className="text-white text-base font-bold tracking-tight font-sans uppercase mb-1">
+                <div className="w-[140px] sm:w-[180px] h-0.5 bg-gradient-to-r from-transparent via-[#FF1493]/30 to-transparent my-2 sm:my-3" />
+                <p className="text-white text-sm sm:text-base font-bold tracking-tight font-sans uppercase mb-1">
                   System Ready to Evoke
                 </p>
                 
                 {/* Scroll Indicator */}
-                <div className="flex flex-col items-center mt-4">
-                  <span className="font-mono text-[9px] text-[#FF1493]/80 tracking-widest uppercase animate-bounce">
+                <div className="flex flex-col items-center mt-3">
+                  <span className="font-mono text-[8px] sm:text-[9px] text-[#FF1493]/80 tracking-widest uppercase animate-bounce">
                     Scroll Down to Crack
                   </span>
-                  <div className="w-5 h-8 rounded-full border border-slate-700 mt-2 flex justify-center p-1">
-                    <div className="w-1 h-2 bg-[#FF1493] rounded-full animate-scroll-motion" />
+                  <div className="w-4 h-7 sm:w-5 sm:h-8 rounded-full border border-slate-700 mt-1.5 flex justify-center p-0.5 sm:p-1">
+                    <div className="w-1 h-1.5 sm:h-2 bg-[#FF1493] rounded-full animate-scroll-motion" />
                   </div>
                 </div>
               </div>
@@ -1238,17 +1281,17 @@ export default function App() {
           )}
 
           {/* High precision telemetry indicator overlay floating bottom - Direct from Artistic Flair Design */}
-          <div className="absolute bottom-0 inset-x-0 p-6 z-30 pointer-events-auto flex justify-between items-center border-t border-[#FF1493]/10 bg-gradient-to-t from-[#000000]/95 via-[#000000]/40 to-transparent">
-            <div className="font-mono text-[9px] text-slate-500 text-left">
-              <span className="text-slate-400 font-bold">[ ENGAGE_STRUCTURAL_STRESS ]</span> &mdash; MANUAL_OVERRIDE_ENABLED
+          <div className="absolute bottom-0 inset-x-0 p-4 sm:p-6 z-30 pointer-events-auto flex flex-col sm:flex-row gap-3 justify-between items-center border-t border-[#FF1493]/10 bg-gradient-to-t from-[#000000]/95 via-[#000000]/40 to-transparent">
+            <div className="font-mono text-[8px] sm:text-[9px] text-slate-500 text-center sm:text-left">
+              <span className="text-slate-400 font-bold">[ STRESS_ACTIVE ]</span> <span className="hidden md:inline">&mdash; MANUAL_OVERRIDE_ENABLED</span>
             </div>
 
             {/* Manual Scroll indicator feedback block */}
-            <div className="flex items-center gap-6">
-              <div className="font-mono text-[9px] text-slate-300">
-                SCROLL PROGRESS: <span className="text-[#FF1493] font-bold">{(scrollProgress * 100).toFixed(1)}%</span>
+            <div className="flex items-center gap-3 sm:gap-6">
+              <div className="font-mono text-[8px] sm:text-[9px] text-slate-300">
+                SCROLL: <span className="text-[#FF1493] font-bold">{(scrollProgress * 100).toFixed(1)}%</span>
               </div>
-              <div className="relative w-40 h-1 bg-[#3A0822]/30 border border-[#FF1493]/20 rounded-full overflow-hidden">
+              <div className="relative w-28 sm:w-40 h-1 bg-[#3A0822]/30 border border-[#FF1493]/20 rounded-full overflow-hidden">
                 <div
                   className="absolute top-0 left-0 bottom-0 bg-[#FF1493] transition-all duration-75 shadow-[0_0_8px_#FF1493]"
                   style={{ width: `${scrollProgress * 100}%` }}
@@ -1256,8 +1299,8 @@ export default function App() {
               </div>
             </div>
 
-            <div className="font-mono text-[9px] text-slate-500 text-right font-bold">
-              STABLE_FRAGMENTS: {currentShards.length.toString().padStart(2, '0')} // SYNC_STATUS: NOMINAL
+            <div className="font-mono text-[8px] sm:text-[9px] text-slate-500 text-center sm:text-right font-bold">
+              FRAGMENTS: {currentShards.length.toString().padStart(2, '0')} <span className="hidden sm:inline">// RECON: OK</span>
             </div>
           </div>
 
